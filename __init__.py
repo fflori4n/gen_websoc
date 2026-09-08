@@ -25,11 +25,13 @@ from homeassistant.const import EVENT_HOMEASSISTANT_STOP, EVENT_HOMEASSISTANT_ST
 import queue
 from typing import Any, TypedDict
 
-
+# from lib.types_a_consts import *
 
 #from .lib.Web_sensor import Custom_Websoc_Sensor_Tag, Custom_Websoc_Sensor
 # The domain of your component. Should be equal to the name of your component.
 DOMAIN = 'gen_websoc'
+
+_LOGGER = logging.getLogger(__name__)
 
 CONF_NAME = 'name'
 CONF_PLATFORM = "platform"
@@ -37,9 +39,7 @@ CONF_TAG_TEMPLATE_LIST = 'tag_templates'
 DEFAULT_NAME = '_unnamed_ws_sensor'
 DEFAULT_PLATFORM = '_undef'
 
-_LOGGER = logging.getLogger(__name__)
 LOG_PREFIX = f"[{DOMAIN}]: "
-
 
 CONF_TAG_TEMPLATE_LIST = "tag_templates"
 
@@ -51,11 +51,12 @@ def validate_tag_template(value):
         {
             vol.Required("name"): cv.string,
             vol.Optional("state"): vol.Any(None, cv.string, int, float, bool),
-            vol.Optional("friendly_name"): cv.string,
-            vol.Optional("device_class"): cv.string,
-            vol.Optional("unit_of_measurement"): cv.string,
-            vol.Optional("state_class"): cv.string,
-            vol.Optional("timeout"): cv.string,
+            vol.Optional("friendly_name"): vol.Any(None, cv.string),
+            vol.Optional("device_class"): vol.Any(None, cv.string),
+            vol.Optional("unit_of_measurement"): vol.Any(None, cv.string),
+            vol.Optional("state_class"): vol.Any(None, cv.string),
+            vol.Optional("timeout"): vol.Any(None, cv.string),
+            vol.Optional("icon"): vol.Any(None, cv.string),
         },
         extra=vol.ALLOW_EXTRA,
     )
@@ -117,7 +118,7 @@ class Queued_service_call: # or use something that extends TypedDict?
         self.payload = payload
         self.timestamp = timestamp
 
-        # hash of this new call, without considering timestamp so that if same packet is recieved multiple times, it will be filtered out.
+        # hash of this new call, without considering timestamp so that if same packet is recieved multiple times, it will have the same hash.
         self.obj_hash = hash(json.dumps((self.req_type, self.device, self.payload), sort_keys=True))
 
     def __repr__(self):
@@ -131,33 +132,48 @@ class Queued_service_call: # or use something that extends TypedDict?
 
 class Field_sensor:
 
-    name = ""
-    state = None
-    attributes = {}
-    special_attributes = {}
+    _STALE_VALUE                    = None  # as a default value, I will use None, because it shows up as gaps in homeassistant UI history graphs
+    _ATTR_FRIENDLY_NAME             = "friendly_name"
+    _ATTR_DEVICE_CLASS              = "device_class"
+    _ATTR_STATE_CLASS               = "state_class"
+    _ATTR_UNIT_OF_MEASUREMENT       = "unit_of_measurement"
+    _ATTR_ICON                      = "icon"    
+
+    # Make sure to initialize all members, python is wierd in this regard, these become class variables
+    name                            = ""
+    state                           = None
+    attributes                      = {}
+    special_attributes              = {}
 
     last_measurement_recieved_tm    : datetime | None = None
     measurement_goes_stale_tm       : datetime | None = None
     report_timout_after_sec         = None
     measurement_stale               = False
+    ha_state_up_to_date             : bool = False      # This is mosltly just a signal that state inside custom component sensor list was updated, and the value needs to be transfered to HA state as well, naming is not the best.
 
-    _STALE_VALUE                    = None  # as a default value, I will use None, because it shows up as gaps in homeassistant UI history graphs             
-
-    ha_state_up_to_date = False      # This is mosltly just a signal that state inside custom component sensor list was updated, and the value needs to be transfered to HA state as well, naming is not the best.
+    list_of_attribute_keys = list([_ATTR_FRIENDLY_NAME, _ATTR_DEVICE_CLASS, _ATTR_STATE_CLASS, _ATTR_UNIT_OF_MEASUREMENT, _ATTR_ICON])      
 
     def __init__(self, template_map):
-        global ha_state_up_to_date
 
-        self.name = template_map["name"]
-        self.state = template_map["state"]
-        self.report_timout_after_sec = int(template_map["timeout"]) * 60
-        #self.attributes.update(template_map["friendly_name"])
-        #self.attributes.update(template_map["state_class"])
+        self.name = template_map.get("name")
+        self.state = template_map.get("state")
+        self.report_timout_after_sec = int(template_map.get("timeout")) * 60
+        self.attributes = {}
 
-        ha_state_up_to_date = False
+        for attr_key in self.list_of_attribute_keys:
+            val = template_map.get(attr_key)
+            if val is None or (isinstance(val, str) and not val.strip()):
+                continue
+            self.attributes[attr_key] = val
+
+        _LOGGER.debug(f"created local sensor {self.name} = {self.state} based on config template with attributes:{str(self.attributes)}")
+        self.ha_state_up_to_date = False
+
+    # @staticmethod
+    # def is_truthy(val) -> bool:
+    #     return val is not None and (not isinstance(val, str) or bool(val.strip()))
 
     def update_loc_state(self, new_state, time_of_rx : datetime):
-        global ha_state_up_to_date
 
         self.last_measurement_recieved_tm = time_of_rx
         self.measurement_goes_stale_tm = self.last_measurement_recieved_tm + timedelta(seconds=self.report_timout_after_sec)
@@ -166,11 +182,10 @@ class Field_sensor:
             pass
         else:
             self.state = new_state
-            #ha_state_up_to_date = False
-        ha_state_up_to_date = False # Note: think about this, this will create additional work, but the state change will be recoreded in HA? or at least it is up to HA to show this change?
+            #self.ha_state_up_to_date = False
+        self.ha_state_up_to_date = False # Note: think about this, this will create additional work, but the state change will be recoreded in HA? or at least it is up to HA to show this change?
 
     def clear_if_stale(self, current_time: datetime) -> bool:
-        global ha_state_up_to_date
 
         if(not self.report_timout_after_sec) or (not self.measurement_goes_stale_tm) or (not current_time):
             return True
@@ -179,19 +194,29 @@ class Field_sensor:
 
         if self.measurement_stale and (self.state != self._STALE_VALUE):
             self.state = self._STALE_VALUE
-            ha_state_up_to_date = False
+            self.ha_state_up_to_date = False
             _LOGGER.debug(f"{self.name} is in timeout, setting internal state to stale.")
 
         return self.measurement_stale 
 
     def clear_value(self):
         self.state = None
+        self.ha_state_up_to_date = False
 
     def __repr__(self):
         return f"FIELD_SENSOR: {self.name}, {self.state}, with ATTR: {(item for item in self.attributes)}"
     
     def __str__(self):
         return f"FIELD_SENSOR: {self.name}, {self.state}, with ATTR: {(item for item in self.attributes)}"
+
+    @staticmethod
+    def get_field_sensor_from_list(field_device : Field_device, sensor_name : str) -> Field_sensor:
+        selected_field_sensor = next((sensor for sensor in field_device.field_sensors if sensor.name == sensor_name), None)
+            
+        if selected_field_sensor is None:
+            raise ValueError(f"Could not find sensor {sensor_name} under {field_device.name}\'s sensors")
+        
+        return selected_field_sensor
 
 class Field_device:
     
@@ -206,6 +231,19 @@ class Field_device:
     # is battery powered
     # expected update period
 
+    location_en = False
+    # @TODO: implement zones and location tracking
+    DEVICE_ZONE_LATITUDE = ""
+    DEVICE_ZONE_LONGITUDE = ""
+# source_type: gps
+# latitude: 45.2496716
+# longitude: 19.8370915
+# gps_accuracy: 100
+# altitude: 133
+# course: 0
+# speed: 0
+# vertical_accuracy: 100
+
     def __init__(self, ha_instance: HomeAssistant, field_dev):
 
         self.ha_instance = ha_instance
@@ -214,11 +252,13 @@ class Field_device:
 
         for sensor_template in field_dev["tag_templates"]:
             try:
+                _LOGGER.debug(f"Creating new field sensor")
                 new_field_sensor = Field_sensor(sensor_template)
+                _LOGGER.debug(f"Appending to list of sensors")
                 self.field_sensors.append(new_field_sensor)
             except Exception as e:
                 _LOGGER.debug(f"Error adding sensor from template: {e}")
-                pass
+                continue
         return
 
     def __repr__(self):
@@ -227,32 +267,23 @@ class Field_device:
     def __str__(self):
          return f"SENSOR_DEVICE: {self.name}, {self.platform}, Sensors: {self.field_sensors}"
 
-# Operations that should be grouped with either field dev or field sensor
-def get_field_sensor_from_list(field_device : Field_device, sensor_name : str) -> Field_sensor:
-    selected_field_sensor = next((sensor for sensor in field_device.field_sensors if sensor.name == sensor_name), None)
+    @staticmethod
+    def get_field_device_from_list(field_device_name : str) -> Field_device:
+        selected_field_dev = next((dev for dev in field_dev_list if dev.name == field_device_name), None)
         
-    if selected_field_sensor is None:
-        raise ValueError(f"Could not find sensor {sensor_name} under {field_device.name}\'s sensors")
+        if selected_field_dev is None:
+            raise ValueError(f"Could not find device {field_device_name} in device list")
     
-    return selected_field_sensor
-
-def get_field_device_from_list(field_device_name : str) -> Field_device:
-    selected_field_dev = next((dev for dev in field_dev_list if dev.name == field_device_name), None)
-        
-    if selected_field_dev is None:
-        raise ValueError(f"Could not find device {field_device_name} in device list")
-    
-    return selected_field_dev
-
+        return selected_field_dev
 
 def set_measurement(ha: HomeAssistant, field_device : Field_device, new_entity : Field_sensor):
 
-    if not new_entity.name:
-        raise ValueError("entity name is None or empty")
+    if (not new_entity.name) or (not field_device.name):
+        raise ValueError("Field device or it's entity has an invalid name")
 
     entity_id = f"{field_device.name}.{new_entity.name}"
 
-    _LOGGER.warning("HA.STATES.SET: %s = %s w attr: %s", entity_id, new_entity.state, new_entity.attributes)
+    _LOGGER.debug("ha.states.async.set: %s = %s w attr: %s", entity_id, new_entity.state, new_entity.attributes)
     ha.add_job(ha.states.async_set, entity_id, str(new_entity.state), new_entity.attributes or {}, False )
 
 
@@ -264,7 +295,7 @@ def on_set_val(ha: HomeAssistant, request: Queued_service_call):
 
     selected_field_dev : Field_device = None
     try:
-        selected_field_dev = get_field_device_from_list(field_device_name)
+        selected_field_dev = Field_device.get_field_device_from_list(field_device_name)
     except Exception as e:
         raise HomeAssistantError(e)
 
@@ -273,8 +304,8 @@ def on_set_val(ha: HomeAssistant, request: Queued_service_call):
     # Iterate over attributes, find the corresponding field_sensor and update it's value and metadata.
     for key, value in request.payload.items():
 
-        selected_field_sensor : Field_sensor = get_field_sensor_from_list(selected_field_dev, key)
-        _LOGGER.debug(f"  Updating: {selected_field_sensor.name}, it's new value will be: {value}")
+        selected_field_sensor : Field_sensor = Field_sensor.get_field_sensor_from_list(selected_field_dev, key)
+        _LOGGER.debug(f"Updating: {selected_field_sensor.name}, it's new value will be: {value}")
         selected_field_sensor.update_loc_state(value, time_of_request)
 
 
@@ -284,28 +315,29 @@ async def process_request( ha: HomeAssistant, request: Queued_service_call ) -> 
     await asyncio.sleep(0.2)  # It is probably a good time to yield here in case there is another service call.
     match request.req_type:
         case ServiceType.SET_VALUE:
-            _LOGGER.debug(f"Calling processing for set_val")
+            #_LOGGER.debug(f"Calling processing for set_val")
             time.sleep(0.2)
             on_set_val(ha, request)
         case ServiceType.SET_TIMESTAMPED_VALUE:
             pass
         case _:
-            _LOGGER.debug(f"Failed to route {request.type} to be processed.")
+            _LOGGER.error(f"Failed to route {request.type} to be processed.")
 
 async def update_entities_from_internal_state(ha: HomeAssistant):
 
+    #_LOGGER.debug(f"Transfering internal states to HA")
     for field_dev in field_dev_list:
         field_dev : Field_device
 
         for field_sensor in field_dev.field_sensors:
             field_sensor : Field_sensor
-            #if field_sensor.ha_state_up_to_date == False:
-            set_measurement(ha, field_dev, field_sensor)
-            #    field_sensor.ha_state_up_to_date = True
-                
+            # _LOGGER.debug(f"field sensor {field_sensor.name} is {field_sensor.ha_state_up_to_date}")
+            if not field_sensor.ha_state_up_to_date:
+                set_measurement(ha, field_dev, field_sensor)
+            field_sensor.ha_state_up_to_date = True      
 
 async def reset_stale_sensors(ha: HomeAssistant, current_time: datetime):
-    _LOGGER.debug(f"Checking for stale sensors")
+    #_LOGGER.debug(f"Checking for stale sensors")
 
     for field_dev in field_dev_list:
         field_dev : Field_device
@@ -367,7 +399,7 @@ def validate_service_request(service_obj : ServiceCall, check_dev_exists : bool)
     field_device_name = service_obj.service[:service_obj.service.rfind(".")]
 
     try:
-        selected_field_dev = get_field_device_from_list(field_device_name)
+        selected_field_dev = Field_device.get_field_device_from_list(field_device_name)
     except Exception as e:
         raise HomeAssistantError(e)
     
@@ -382,7 +414,6 @@ async def service_call_enqueue_and_respond(service_obj : ServiceCall) -> None:
     global unprocessed_requests
 
     #_LOGGER.debug(f"Callback: {service_obj.service} : {service_obj.data}")
-
     # Check which service call is it exactly, this is used to later route the ServiceCall when taken from queue
     try:
         service_type = ServiceType(service_obj.service.split(".", 1)[1])
@@ -425,10 +456,8 @@ def setup(ha_instance: HomeAssistant, ha_config: ConfigType) -> bool:
     _LOGGER.warning("setting up component.")
 
     predefined_devices = configuration.get(DOMAIN, [])
-    #_LOGGER.debug(f"Sensors: {predefined_devices[0]}")
+    
     for predefined_device in predefined_devices:
-        #_LOGGER.debug("Sensors:")
-        #_LOGGER.debug(Field_device(ha, predefined_device))
         field_dev_list.append(Field_device(ha, predefined_device))
 
     for device in field_dev_list:
@@ -437,10 +466,9 @@ def setup(ha_instance: HomeAssistant, ha_config: ConfigType) -> bool:
         _LOGGER.debug(f"setting up {device}")
 
         if device.platform == "websoc":
-            _LOGGER.debug(f"setup: registering endpoints for {device.name}")
+            #_LOGGER.debug(f"setup: registering endpoints for {device.name}")
             ha.services.register(DOMAIN, (device.name + "." + ServiceType.SET_VALUE.value), service_call_enqueue_and_respond)
             ha.services.register(DOMAIN, (device.name + "." + ServiceType.SET_TIMESTAMPED_VALUE.value), service_call_enqueue_and_respond)
-            _LOGGER.debug(f"{DOMAIN}, {device.name}.set_values")
         else:
             _LOGGER.error(f"config: device platform {device.platform} is not recognized, {device.name} disabled.")
             return True
@@ -452,7 +480,7 @@ def setup(ha_instance: HomeAssistant, ha_config: ConfigType) -> bool:
     ha.async_create_task(request_worker(ha))
 
     # listen for HA stop to disconnect
-    ha.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, clear_all_states())
+    ha.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, clear_all_states(ha))
     
 
     return True
