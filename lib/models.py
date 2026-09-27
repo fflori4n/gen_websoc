@@ -27,6 +27,7 @@ class Queued_service_call: # or use something that extends TypedDict?
 
         # hash of this new call, without considering timestamp so that if same packet is recieved multiple times, it will have the same hash.
         self.obj_hash = hash(json.dumps((self.req_type, self.device, self.payload), sort_keys=True))
+        _LOGGER.debug(f"Request obj hash is: {self.obj_hash}")
 
     def __repr__(self):
         return f"QREQ: {self.req_type} from {self.device} : {self.timestamp} : {json.dumps(self.payload, indent=2)}"
@@ -111,10 +112,10 @@ class Field_sensor:
         self.ha_state_up_to_date = False
 
     def __repr__(self):
-        return f"FIELD_SENSOR: {self.name}, {self.state}, with ATTR: {(item for item in self.attributes)}"
+        return f"\n\t{self.name}: {self.state}, ATTR: {((item + "\n") for item in self.attributes)}"
     
     def __str__(self):
-        return f"FIELD_SENSOR: {self.name}, {self.state}, with ATTR: {(item for item in self.attributes)}"
+        return f"\n\t{self.name}: {self.state}, ATTR: {((item + "\n") for item in self.attributes)}"
 
     @staticmethod
     def get_field_sensor_from_list(field_device : Field_device, sensor_name : str) -> Field_sensor:
@@ -156,6 +157,7 @@ class Field_device:
         self.ha_instance = ha_instance
         self.name = field_dev["name"]
         self.platform = field_dev["platform"]
+        self.field_sensors = []
 
         for sensor_template in field_dev["tag_templates"]:
             try:

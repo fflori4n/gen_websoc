@@ -9,42 +9,12 @@ from typing import Any
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
 
-from .internal_var import unprocessed_requests
+from .internal_var import unprocessed_requests, _active_queue_worker
 from .models import Field_device, Field_sensor, Queued_service_call
 from .types_a_consts import ServiceType
+from .state import request_worker
 
 _LOGGER = logging.getLogger(__name__)
-
-
-def on_set_val(ha: HomeAssistant, request: Queued_service_call):
-
-    field_device_name = request.device
-    time_of_request = request.timestamp
-    _LOGGER.debug("Processing on_set_val from: %s", request.device)
-
-    try:
-        selected_field_dev = Field_device.get_field_device_from_list(field_device_name)
-    except Exception as e:
-        raise HomeAssistantError(e)
-
-    for key, value in request.payload.items():
-        selected_field_sensor = Field_sensor.get_field_sensor_from_list(selected_field_dev, key)
-        _LOGGER.debug("Updating: %s, its new value will be: %s", selected_field_sensor.name, value)
-        selected_field_sensor.update_loc_state(value, time_of_request)
-
-
-async def process_request(ha: HomeAssistant, request: Queued_service_call) -> None:
-    await asyncio.sleep(0.2)
-
-    match request.req_type:
-        case ServiceType.SET_VALUE:
-            time.sleep(0.2)
-            on_set_val(ha, request)
-        case ServiceType.SET_TIMESTAMPED_VALUE:
-            pass
-        case _:
-            _LOGGER.error("Failed to route %s to be processed.", request.req_type)
-
 
 def validate_service_request(service_obj: ServiceCall, check_dev_exists: bool):
     field_device_name = service_obj.service[: service_obj.service.rfind(".")]
@@ -85,6 +55,13 @@ async def service_call_enqueue_and_respond(service_obj: ServiceCall) -> None:
                 request,
                 unprocessed_requests.maxsize - unprocessed_requests.qsize(),
             )
+
+            # Start up the worker task that will drain the requests
+            ha_instance = service_obj.hass
+            global _active_queue_worker
+            if _active_queue_worker is None or _active_queue_worker.done():
+                _active_queue_worker = ha_instance.async_create_task(request_worker(ha_instance))
+
     except asyncio.QueueFull:
         raise HomeAssistantError("failed insert into unprocessed_requests queue")
 

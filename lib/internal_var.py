@@ -13,4 +13,5 @@ if TYPE_CHECKING:
 ha: HomeAssistant | None = None
 configuration: ConfigType | None = None
 unprocessed_requests: "asyncio.Queue[Queued_service_call]" = asyncio.Queue(maxsize=100)
+_active_queue_worker = None
 field_dev_list: list["Field_device"] = []
