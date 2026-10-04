@@ -61,25 +61,30 @@ class Field_sensor:
 
     list_of_attribute_keys = list([_ATTR_FRIENDLY_NAME, _ATTR_DEVICE_CLASS, _ATTR_STATE_CLASS, _ATTR_UNIT_OF_MEASUREMENT, _ATTR_ICON])      
 
-    def __init__(self, template_map):
+    def __init__(self, template_map, common_template):
 
-        self.name = template_map.get("name")
-        self.state = template_map.get("state")
-        self.report_timout_after_sec = int(template_map.get("timeout")) * 60
+        #_LOGGER.debug(common_template)
+        #_LOGGER.debug(template_map)
+
+        self.name = ""
+        self.state = None
         self.attributes = {}
 
+        self.name = template_map.get("name") if (template_map.get("name") is not None) else common_template.get("name")
+        self.state = template_map.get("state") if (template_map.get("state") is not None) else common_template.get("state")
+        timeout = template_map.get("timeout") if (template_map.get("timeout") is not None) else common_template.get("timeout")
+        self.report_timout_after_sec = (int(timeout) * 60.0) if timeout else 0
+
         for attr_key in self.list_of_attribute_keys:
-            val = template_map.get(attr_key)
+
+            val = template_map.get(attr_key) if (template_map.get(attr_key) is not None) else common_template.get(attr_key)
             if val is None or (isinstance(val, str) and not val.strip()):
                 continue
+
             self.attributes[attr_key] = val
 
-        _LOGGER.debug(f"created local sensor {self.name} = {self.state} based on config template with attributes:{str(self.attributes)}")
+        #_LOGGER.debug(f"created local sensor {self.name} = {self.state} based on config template with attributes:{str(self.attributes)}")
         self.ha_state_up_to_date = False
-
-    # @staticmethod
-    # def is_truthy(val) -> bool:
-    #     return val is not None and (not isinstance(val, str) or bool(val.strip()))
 
     def update_loc_state(self, new_state, time_of_rx : datetime):
 
@@ -134,6 +139,8 @@ class Field_device:
     name = '_UNDEF'
     platform = None
     field_sensors = []
+
+    com_template = {}
     # description = None
     # zone, lattitude longitude accuracy etc.
     # is battery powered
@@ -158,16 +165,18 @@ class Field_device:
         self.name = field_dev["name"]
         self.platform = field_dev["platform"]
         self.field_sensors = []
+        self.default_template_attributes = {}
+        self.com_template = field_dev.get("common_template")[0] if field_dev.get("common_template") else {}
 
         for sensor_template in field_dev["tag_templates"]:
-            try:
-                _LOGGER.debug(f"Creating new field sensor")
-                new_field_sensor = Field_sensor(sensor_template)
-                _LOGGER.debug(f"Appending to list of sensors")
-                self.field_sensors.append(new_field_sensor)
-            except Exception as e:
-                _LOGGER.debug(f"Error adding sensor from template: {e}")
-                continue
+            #try:
+            #_LOGGER.debug(f"Creating new field sensor")
+            new_field_sensor = Field_sensor(sensor_template, self.com_template)
+            #_LOGGER.debug(f"Appending to list of sensors")
+            self.field_sensors.append(new_field_sensor)
+            #except Exception as e:
+            #    _LOGGER.debug(f"Error adding sensor from template: {e}")
+            #    continue
         return
 
     def __repr__(self):

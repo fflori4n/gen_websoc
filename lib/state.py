@@ -37,8 +37,22 @@ async def update_entities_from_internal_state(ha: HomeAssistant):
 
 
 async def reset_stale_sensors(ha: HomeAssistant, current_time: datetime):
+
+    global _active_queue_worker
+
+    if _active_queue_worker is not None:
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(_active_queue_worker),
+                timeout=30,
+            )
+        except asyncio.TimeoutError:
+            _LOGGER.warning("Reset stale timed out waiting for queue worker to finish.")
+            return
+
     for field_dev in field_dev_list:
         for field_sensor in field_dev.field_sensors:
+            await asyncio.sleep(0)
             field_sensor.clear_if_stale(current_time)
 
 def on_set_val(ha: HomeAssistant, request: Queued_service_call):
