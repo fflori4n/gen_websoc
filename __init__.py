@@ -19,23 +19,23 @@ from .lib.types_a_consts import ServiceType
 
 _LOGGER = logging.getLogger(__name__)
 
-
 async def async_setup(ha_instance: HomeAssistant, ha_config: ConfigType) -> bool:
     
     internal_var.ha = ha_instance
     internal_var.configuration = ha_config
 
-    _LOGGER.warning("Starting gen websoc Custom Integration.")
+    _LOGGER.debug("setting up integration")
 
+    # load the predefined sensors from HA configuration.yaml
     for predefined_device in ha_config.get(DOMAIN, []):
         await asyncio.sleep(0)
         internal_var.field_dev_list.append(Field_device(ha_instance, predefined_device))
 
+    # initialize all the predefined sensors with their default value
     await update_entities_from_internal_state(ha_instance)
 
-    # # In case Custom component goes offline, get a callback to clean up entities - in this case to set them to None so that gap will show up on history graph.
-    # # NOTE: What if in case shutdown is immediate before cfg is read, then again the server is going offline anyways...
-    # #ha_instance.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, clear_all_states(ha_instance))
+    # In case Custom component goes offline, get a callback to clean up entities - in this case to set them to None so that gap will show up on history graph.
+    ha_instance.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, lambda event: clear_all_states(event, ha_instance))
 
     for device in internal_var.field_dev_list:
         _LOGGER.debug("setting up %s", device)
@@ -48,25 +48,12 @@ async def async_setup(ha_instance: HomeAssistant, ha_config: ConfigType) -> bool
             return True
 
     async def periodic_callback(now):
-        _LOGGER.debug("Minute mark!")
+        #_LOGGER.debug("Minute mark!")
         await reset_stale_sensors(ha_instance, datetime.now())
         await update_entities_from_internal_state(ha_instance)
 
-    remove_listener = async_track_time_change(
-        ha_instance,
-        periodic_callback,
-        second=25,
-    )
-
+    remove_listener = async_track_time_change(ha_instance, periodic_callback, second=25 )
     ha_instance.data[DOMAIN] = remove_listener
 
-    #_LOGGER.warning("Creating request worker")
-    # From now on, all tasks will be handled by request worker
-    # First order of business will be to initialize variables - this is now done by request_worker
-    #ha_instance.async_create_task(request_worker(ha_instance))
     _LOGGER.warning("setup done.")
-
-    #ha_instance.loop.call_soon_threadsafe(ha_instance.async_create_task,request_worker(ha_instance))
-    #ha_instance.async_create_task(request_worker(ha_instance))
-
     return True

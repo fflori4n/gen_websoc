@@ -59,32 +59,45 @@ class Field_sensor:
     measurement_stale               = False
     ha_state_up_to_date             : bool = False      # This is mosltly just a signal that state inside custom component sensor list was updated, and the value needs to be transfered to HA state as well, naming is not the best.
 
-    list_of_attribute_keys = list([_ATTR_FRIENDLY_NAME, _ATTR_DEVICE_CLASS, _ATTR_STATE_CLASS, _ATTR_UNIT_OF_MEASUREMENT, _ATTR_ICON])      
+    list_of_attribute_keys = list([_ATTR_FRIENDLY_NAME, _ATTR_DEVICE_CLASS, _ATTR_STATE_CLASS, _ATTR_UNIT_OF_MEASUREMENT, _ATTR_ICON])
 
+    
     def __init__(self, template_map, common_template):
-
-        #_LOGGER.debug(common_template)
-        #_LOGGER.debug(template_map)
 
         self.name = ""
         self.state = None
         self.attributes = {}
+        self.ha_state_up_to_date = False
 
-        self.name = template_map.get("name") if (template_map.get("name") is not None) else common_template.get("name")
-        self.state = template_map.get("state") if (template_map.get("state") is not None) else common_template.get("state")
-        timeout = template_map.get("timeout") if (template_map.get("timeout") is not None) else common_template.get("timeout")
-        self.report_timout_after_sec = (int(timeout) * 60.0) if timeout else 0
+        def load_initalizer_value(key : str, primary_dict : dict, secondary_dict : dict):
+
+            if not key:
+                raise ValueError("key can't be None")
+            # if this field sensor has a defined value for this key, load it from there, even if it's None
+            if key in primary_dict:
+                return primary_dict.get(key)
+            # otherwise try to see if key is in common/ field device wide dict
+            elif key in secondary_dict:
+                return secondary_dict.get(key)
+            # no luck, this key is not predefined in config.
+            else: 
+                return None
+
+        self.name   = load_initalizer_value("name", template_map, common_template)
+        self.state  = load_initalizer_value("state", template_map, common_template)
+        timeout     = load_initalizer_value("timeout", template_map, common_template)
+        self.report_timout_after_sec = (int(timeout) * 60.0) if timeout else 0.0
 
         for attr_key in self.list_of_attribute_keys:
 
-            val = template_map.get(attr_key) if (template_map.get(attr_key) is not None) else common_template.get(attr_key)
+            val = load_initalizer_value(attr_key, template_map, common_template)
             if val is None or (isinstance(val, str) and not val.strip()):
                 continue
 
             self.attributes[attr_key] = val
 
         #_LOGGER.debug(f"created local sensor {self.name} = {self.state} based on config template with attributes:{str(self.attributes)}")
-        self.ha_state_up_to_date = False
+        return
 
     def update_loc_state(self, new_state, time_of_rx : datetime):
 
@@ -95,8 +108,8 @@ class Field_sensor:
             pass
         else:
             self.state = new_state
-            #self.ha_state_up_to_date = False
-        self.ha_state_up_to_date = False # Note: think about this, this will create additional work, but the state change will be recoreded in HA? or at least it is up to HA to show this change?
+            self.ha_state_up_to_date = False
+        #self.ha_state_up_to_date = False # Note: think about this, this will create additional work, but the state change will be recoreded in HA? or at least it is up to HA to show this change?
 
     def clear_if_stale(self, current_time: datetime) -> bool:
 
