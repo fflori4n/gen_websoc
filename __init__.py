@@ -38,8 +38,6 @@ async def async_setup(ha_instance: HomeAssistant, ha_config: ConfigType) -> bool
     ha_instance.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, lambda event: clear_all_states(event, ha_instance))
 
     for device in internal_var.field_dev_list:
-        _LOGGER.debug("setting up %s", device)
-
         if device.platform == "websoc":
             ha_instance.services.async_register(DOMAIN,f"{device.name}.{ServiceType.SET_VALUE.value}",service_call_enqueue_and_respond)
             ha_instance.services.async_register(DOMAIN,f"{device.name}.{ServiceType.SET_TIMESTAMPED_VALUE.value}",service_call_enqueue_and_respond)

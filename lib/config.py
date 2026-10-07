@@ -45,7 +45,9 @@ TEMPLATE_OBJECT_SCHEMA = vol.Schema({
 single_sensor_schema = vol.Schema(
     {
         vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
-        vol.Optional(CONF_PLATFORM, default=DEFAULT_PLATFORM): cv.string,
+        vol.Optional(CONF_PLATFORM, default=DEFAULT_PLATFORM): cv.string, 
+        vol.Optional("en_meta_entity", default=False): bool,
+        vol.Optional("en_notifications", default=False): bool, 
         vol.Optional("common_template", default=[]): vol.All(
             cv.ensure_list,
             [TEMPLATE_OBJECT_SCHEMA],

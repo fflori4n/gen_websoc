@@ -29,29 +29,43 @@ def set_measurement(ha_instance: HomeAssistant, field_device: Field_device, new_
     return True
 
 async def update_entities_from_internal_state(ha_instance: HomeAssistant):
+
     for field_dev in field_dev_list:
         for field_sensor in field_dev.field_sensors:
             field_sensor.ha_state_up_to_date = set_measurement(ha_instance, field_dev, field_sensor)
             await asyncio.sleep(0)
+    
+        if field_dev.en_device_meta:
+            for meta_entity in field_dev.meta_tag_list:
+                name, state, attributes = field_dev.get_meta(meta_entity)
+                _LOGGER.debug("meta set: %s, %s, %s", name, state, attributes)
+                ha_instance.add_job(ha_instance.states.async_set, name, state, attributes, False)
+                await asyncio.sleep(0)
 
 async def reset_stale_sensors(ha: HomeAssistant, current_time: datetime):
     global _active_queue_worker
 
     if _active_queue_worker is not None:
         try:
-            await asyncio.wait_for(
-                asyncio.shield(_active_queue_worker),
-                timeout=30,
-            )
+            await asyncio.wait_for(asyncio.shield(_active_queue_worker),timeout=30)
         except asyncio.TimeoutError:
             _LOGGER.warning("Reset stale timed out waiting for queue worker to finish.")
             return
 
     for field_dev in field_dev_list:
+
+        field_dev.numof_sensors_timeout = 0
+        field_dev.numof_sensors_working = 0
+
         for field_sensor in field_dev.field_sensors:
             await asyncio.sleep(0)
-            field_sensor.clear_if_stale(current_time)
-
+            stale = field_sensor.clear_if_stale(current_time)
+            if stale is not None:
+                if stale == True:
+                    field_dev.numof_sensors_working = field_dev.numof_sensors_working + 1
+                else:
+                    field_dev.numof_sensors_timeout = field_dev.numof_sensors_timeout  + 1
+                    
 def on_set_val(ha: HomeAssistant, request: Queued_service_call):
 
     #_LOGGER.debug("Processing on_set_val from: %s", request.device)
@@ -119,6 +133,11 @@ async def clear_all_states(event, ha_instance : HomeAssistant):
     for field_dev in field_dev_list:
         for field_sensor in field_dev.field_sensors:
             field_sensor.clear_value()
+        
+        if field_dev.en_device_meta:
+            for meta_entity in field_dev.meta_tag_list:
+                name, state, attributes = field_dev.get_meta(meta_entity)
+                ha_instance.add_job(ha_instance.states.async_set, name, None, attributes, False)
 
     await update_entities_from_internal_state(ha_instance)
     _LOGGER.debug("finished.ready to go offline.")
