@@ -13,34 +13,40 @@ from .types_a_consts import ServiceType
 
 _LOGGER = logging.getLogger(__name__)
 
-def set_measurement(ha_instance: HomeAssistant, field_device: Field_device, new_entity: Field_sensor):
-
-    if new_entity.ha_state_up_to_date:
-        return True
-    
-    if (not new_entity.name) or (not field_device.name):
-        raise ValueError("Field device or its entity has an invalid name")
+def set_ha_state(ha_instance: HomeAssistant, entity_id : str, new_state, new_attributes) -> bool :
 
     if not ha_instance:
         raise ValueError("Function called without valid homeassistant instance")
 
-    ha_instance.add_job(ha_instance.states.async_set, f"{field_device.name}.{new_entity.name}", str(new_entity.state), new_entity.attributes or {}, False)
-    _LOGGER.debug("HA_STATE_SET: %s.%s = %s", field_device.name, new_entity.name, new_entity.state)
+#     if (not new_entity.name) or (not field_device.name):
+#         raise ValueError("Field device or its entity has an invalid name")
+
+    present_entity = ha_instance.states.get(entity_id)
+
+    if (present_entity is None) or (present_entity.state != new_state) or (present_entity.attributes != new_attributes):
+
+        ha_instance.add_job(ha_instance.states.async_set, entity_id, new_state, new_attributes or {}, False)
+
+        if present_entity is None:
+            _LOGGER.debug("Create Entity: %s = %s w %s", entity_id, new_state, new_attributes or {})
+        else:
+            _LOGGER.debug("Set Entity: %s = %s ", entity_id, new_state)
     return True
 
 async def update_entities_from_internal_state(ha_instance: HomeAssistant):
 
     for field_dev in field_dev_list:
         for field_sensor in field_dev.field_sensors:
-            field_sensor.ha_state_up_to_date = set_measurement(ha_instance, field_dev, field_sensor)
-            await asyncio.sleep(0)
+            if not field_sensor.ha_state_up_to_date:
+                set_ha_state(ha_instance, f"{field_dev.name}.{field_sensor.name}", field_sensor.state, field_sensor.attributes)
+                await asyncio.sleep(0)
     
         if field_dev.en_device_meta:
             for meta_entity in field_dev.meta_tag_list:
                 name, state, attributes = field_dev.get_meta(meta_entity)
-                _LOGGER.debug("meta set: %s, %s, %s", name, state, attributes)
-                ha_instance.add_job(ha_instance.states.async_set, name, state, attributes, False)
-                await asyncio.sleep(0)
+                if name is not None:
+                    set_ha_state(ha_instance, name, state, attributes)
+                    await asyncio.sleep(0)
 
 async def reset_stale_sensors(ha: HomeAssistant, current_time: datetime):
     global _active_queue_worker
@@ -121,7 +127,7 @@ async def request_worker(hass: HomeAssistant):
             unprocessed_requests.task_done()
 
     await update_entities_from_internal_state(hass)
-
+    await reset_stale_sensors(hass, datetime.now())
     _LOGGER.warning("Request worker done.")
     _active_queue_worker = None
     return
@@ -137,7 +143,7 @@ async def clear_all_states(event, ha_instance : HomeAssistant):
         if field_dev.en_device_meta:
             for meta_entity in field_dev.meta_tag_list:
                 name, state, attributes = field_dev.get_meta(meta_entity)
-                ha_instance.add_job(ha_instance.states.async_set, name, None, attributes, False)
+                set_ha_state(ha_instance, name, None, attributes)
 
     await update_entities_from_internal_state(ha_instance)
     _LOGGER.debug("finished.ready to go offline.")
